@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>家系図アプリ（完全版）</title>
+<script src="https://cdn.jsdelivr.net/npm/kingraph@latest"></script>
+
+<style>
+body { margin:0; font-family:sans-serif; display:flex; flex-direction:column; height:100vh; }
+#toolbar { background:#222; color:#fff; padding:8px; }
+#toolbar button { margin-right:8px; }
+
+#main { display:flex; flex:1; }
+#graph { flex:3; border-right:1px solid #ccc; position:relative; }
+#panel { flex:1; padding:10px; }
+
+.modal {
+  position:fixed; top:0; left:0; right:0; bottom:0;
+  background:rgba(0,0,0,0.5);
+  display:none; justify-content:center; align-items:center;
+}
+.modal-content {
+  background:#fff; padding:20px; width:300px; border-radius:8px;
+}
+.modal input, .modal select {
+  width:100%; margin-bottom:10px;
+}
+
+.selected-node rect {
+  stroke:red !important;
+  stroke-width:3;
+}
+</style>
+</head>
+
+<body>
+
+<div id="toolbar">
+  <button onclick="openPersonModal()">人物追加</button>
+  <button onclick="openRelationModal()">関係追加</button>
+  <button onclick="deleteSelected()">削除</button>
+  <button onclick="saveJSON()">保存</button>
+  <input type="file" onchange="loadJSON(event)">
+</div>
+
+<div id="main">
+  <div id="graph"></div>
+
+  <div id="panel">
+    <h3>プロパティ</h3>
+
+    <div id="noSelect">未選択</div>
+
+    <div id="editArea" style="display:none">
+      <input id="editName">
+      <select id="editGender">
+        <option value="male">男</option>
+        <option value="female">女</option>
+        <option value="other">その他</option>
+      </select>
+      <button onclick="updatePerson()">更新</button>
+
+      <h4>関係</h4>
+      <div id="relations"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 人物モーダル -->
+<div class="modal" id="personModal">
+  <div class="modal-content">
+    <h3>人物追加</h3>
+    <input id="pName" placeholder="名前">
+    <select id="pGender">
+      <option value="male">男</option>
+      <option value="female">女</option>
+      <option value="other">その他</option>
+    </select>
+    <button onclick="addPerson()">追加</button>
+    <button onclick="closeModal()">キャンセル</button>
+  </div>
+</div>
+
+<!-- 関係モーダル -->
+<div class="modal" id="relationModal">
+  <div class="modal-content">
+    <h3>関係追加</h3>
+
+    <select id="relType" onchange="switchRelType()">
+      <option value="spouse">配偶者</option>
+      <option value="parent">親子</option>
+    </select>
+
+    <div id="spouseFields">
+      <select id="sp1"></select>
+      <select id="sp2"></select>
+      <label><input type="checkbox" id="divorced"> 離婚</label>
+    </div>
+
+    <div id="parentFields" style="display:none">
+      <select id="parent"></select>
+      <select id="child"></select>
+      <label><input type="checkbox" id="adopted"> 養子</label>
+    </div>
+
+    <button onclick="addRelation()">追加</button>
+    <button onclick="closeModal()">キャンセル</button>
+  </div>
+</div>
+
+<script>
+let persons = [];
+let relationships = [];
+let selectedId = null;
+
+function uid(){ return Math.random().toString(36).slice(2); }
+
+function render(){
+  const data = {
+    nodes: persons.map(p=>({id:p.id,name:p.name})),
+    links: relationships.map(r=>({
+      source:r.from,
+      target:r.to,
+      type:r.type
+    }))
+  };
+
+  document.getElementById("graph").innerHTML="";
+  new KinGraph({container:"#graph",data});
+
+  setTimeout(()=>{
+    styleLinks();
+    bindNodeEvents();
+    highlight();
+  },200);
+}
+
+function bindNodeEvents(){
+  document.querySelectorAll("#graph svg g").forEach(g=>{
+    const id = g.__data__?.id;
+    if(!id) return;
+
+    g.style.cursor="pointer";
+    g.onclick = ()=>{
+      selectedId = id;
+      showPanel();
+      highlight();
+    };
+  });
+}
+
+function highlight(){
+  document.querySelectorAll("#graph svg g").forEach(g=>{
+    g.classList.remove("selected-node");
+    if(g.__data__?.id===selectedId){
+      g.classList.add("selected-node");
+    }
+  });
+}
+
+function showPanel(){
+  if(!selectedId){
+    noSelect.style.display="block";
+    editArea.style.display="none";
+    return;
+  }
+
+  const p = persons.find(x=>x.id===selectedId);
+  editName.value = p.name;
+  editGender.value = p.gender;
+
+  noSelect.style.display="none";
+  editArea.style.display="block";
+
+  const relDiv = document.getElementById("relations");
+  relDiv.innerHTML="";
+
+  relationships.forEach(r=>{
+    if(r.from===selectedId || r.to===selectedId){
+      const d=document.createElement("div");
+      d.textContent = JSON.stringify(r);
+      relDiv.appendChild(d);
+    }
+  });
+}
+
+function updatePerson(){
+  const p = persons.find(x=>x.id===selectedId);
+  p.name = editName.value;
+  p.gender = editGender.value;
+  render();
+}
+
+function deleteSelected(){
+  if(!selectedId) return;
+
+  persons = persons.filter(p=>p.id!==selectedId);
+  relationships = relationships.filter(r=>r.from!==selectedId && r.to!==selectedId);
+  selectedId = null;
+  render();
+}
+
+function styleLinks(){
+  const lines=document.querySelectorAll("line");
+  relationships.forEach((r,i)=>{
+    if(!lines[i])return;
+    if(r.type==="spouse" && r.status==="divorced"){
+      lines[i].style.strokeDasharray="5,5";
+    }
+    if(r.type==="parent" && r.relationType==="adopted"){
+      lines[i].style.strokeDasharray="2,2";
+    }
+  });
+}
+
+function openPersonModal(){
+  personModal.style.display="flex";
+}
+
+function openRelationModal(){
+  refreshSelects();
+  relationModal.style.display="flex";
+}
+
+function closeModal(){
+  document.querySelectorAll(".modal").forEach(m=>m.style.display="none");
+}
+
+function addPerson(){
+  persons.push({
+    id:uid(),
+    name:pName.value,
+    gender:pGender.value
+  });
+  closeModal();
+  render();
+}
+
+function addRelation(){
+  if(relType.value==="spouse"){
+    relationships.push({
+      type:"spouse",
+      from:sp1.value,
+      to:sp2.value,
+      status:divorced.checked?"divorced":"married"
+    });
+  }else{
+    relationships.push({
+      type:"parent",
+      from:parent.value,
+      to:child.value,
+      relationType:adopted.checked?"adopted":"biological"
+    });
+  }
+  closeModal();
+  render();
+}
+
+function switchRelType(){
+  spouseFields.style.display = relType.value==="spouse"?"block":"none";
+  parentFields.style.display = relType.value==="parent"?"block":"none";
+}
+
+function refreshSelects(){
+  ["sp1","sp2","parent","child"].forEach(id=>{
+    const el=document.getElementById(id);
+    el.innerHTML="";
+    persons.forEach(p=>{
+      const o=document.createElement("option");
+      o.value=p.id;
+      o.textContent=p.name;
+      el.appendChild(o);
+    });
+  });
+}
+
+function saveJSON(){
+  const blob=new Blob([JSON.stringify({persons,relationships})]);
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  a.download="family.json";
+  a.click();
+}
+
+function loadJSON(e){
+  const r=new FileReader();
+  r.onload=ev=>{
+    const d=JSON.parse(ev.target.result);
+    persons=d.persons;
+    relationships=d.relationships;
+    render();
+  };
+  r.readAsText(e.target.files[0]);
+}
+
+render();
+</script>
+
+</body>
+</html>
